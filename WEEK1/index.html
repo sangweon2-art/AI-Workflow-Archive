@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brick Breaker - Realtime Ranking</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --bg-color: #1a1a2e;
+            --text-color: #ffffff;
+            --accent-color: #e94560;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Pretendard', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        #ui-container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(4px);
+            margin-bottom: 20px;
+        }
+
+        input {
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            margin-bottom: 10px;
+            width: 200px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: none;
+            background-color: var(--primary-color);
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+
+        button:hover { background-color: #357abd; }
+
+        #game-wrapper { display: none; text-align: center; }
+        
+        canvas {
+            background: #0f3460;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(74, 144, 226, 0.2);
+            display: block;
+            margin: 0 auto;
+        }
+
+        #leaderboard {
+            margin-top: 20px;
+            width: 300px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .rank-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .rank-item:last-child { border-bottom: none; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <h2>🧱 BRICK BREAKER</h2>
+        <div id="login-form">
+            <input type="text" id="username" placeholder="이름을 입력하세요" maxlength="10"><br>
+            <button onclick="startGame()">게임 시작</button>
+        </div>
+    </div>
+
+    <div id="game-wrapper">
+        <canvas id="gameCanvas" width="480" height="320"></canvas>
+        <div id="leaderboard">
+            <h3>실시간 TOP 10</h3>
+            <div id="rank-list">로딩 중...</div>
+        </div>
+    </div>
+
+    <script>
+        // 1. Firebase 설정 (Sangweon 님, 여기에 실제 키 값을 입력해 주세요)
+        const firebaseConfig = {
+            apiKey: "AIzaSyDwKd8s2iuS33ppBHyXPAMI_pS9wUVq-AM",
+  authDomain: "block-game-a97a4.firebaseapp.com",
+  databaseURL: "https://block-game-a97a4-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "block-game-a97a4",
+  storageBucket: "block-game-a97a4.firebasestorage.app",
+  messagingSenderId: "482150598876",
+  appId: "1:482150598876:web:f7c06e83e28e9a3c708c19",
+  measurementId: "G-X5V6HQMEKF"
+};
+
+        // Firebase 초기화
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // 게임 변수
+        let canvas = document.getElementById("gameCanvas");
+        let ctx = canvas.getContext("2d");
+        let ballRadius = 10;
+        let x, y, dx, dy;
+        let paddleHeight = 10;
+        let paddleWidth = 75;
+        let paddleX;
+        let rightPressed = false;
+        let leftPressed = false;
+        let brickRowCount = 3;
+        let brickColumnCount = 5;
+        let brickWidth = 75;
+        let brickHeight = 20;
+        let brickPadding = 10;
+        let brickOffsetTop = 30;
+        let brickOffsetLeft = 30;
+        let score = 0;
+        let bricks = [];
+        let playerName = "";
+        let gameRunning = false;
+
+        // 초기화 함수
+        function initGame() {
+            x = canvas.width / 2;
+            y = canvas.height - 30;
+            dx = 2;
+            dy = -2;
+            paddleX = (canvas.width - paddleWidth) / 2;
+            score = 0;
+            bricks = [];
+            for (let c = 0; c < brickColumnCount; c++) {
+                bricks[c] = [];
+                for (let r = 0; r < brickRowCount; r++) {
+                    bricks[c][r] = { x: 0, y: 0, status: 1 };
+                }
+            }
+        }
+
+        function startGame() {
+            playerName = document.getElementById("username").value;
+            if (!playerName) {
+                alert("이름을 입력해 주세요!");
+                return;
+            }
+            document.getElementById("ui-container").style.display = "none";
+            document.getElementById("game-wrapper").style.display = "block";
+            initGame();
+            gameRunning = true;
+            draw();
+            loadLeaderboard();
+        }
+
+        // 키보드 조작 이벤트
+        document.addEventListener("keydown", keyDownHandler, false);
+        document.addEventListener("keyup", keyUpHandler, false);
+
+        function keyDownHandler(e) {
+            if (e.key == "Right" || e.key == "ArrowRight") rightPressed = true;
+            else if (e.key == "Left" || e.key == "ArrowLeft") leftPressed = true;
+        }
+
+        function keyUpHandler(e) {
+            if (e.key == "Right" || e.key == "ArrowRight") rightPressed = false;
+            else if (e.key == "Left" || e.key == "ArrowLeft") leftPressed = false;
+        }
+
+        // 충돌 감지
+        function collisionDetection() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    let b = bricks[c][r];
+                    if (b.status == 1) {
+                        if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
+                            dy = -dy;
+                            b.status = 0;
+                            score++;
+                            if (score == brickRowCount * brickColumnCount) {
+                                endGame(true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+            ctx.fillStyle = "#e94560";
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.rect(paddleX, canvas.height - paddleHeight, paddleWidth, paddleHeight);
+            ctx.fillStyle = "#4a90e2";
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawBricks() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    if (bricks[c][r].status == 1) {
+                        let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
+                        let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
+                        bricks[c][r].x = brickX;
+                        bricks[c][r].y = brickY;
+                        ctx.beginPath();
+                        ctx.rect(brickX, brickY, brickWidth, brickHeight);
+                        ctx.fillStyle = "#ffffff";
+                        ctx.fill();
+                        ctx.closePath();
+                    }
+                }
+            }
+        }
+
+        function drawScore() {
+            ctx.font = "16px Arial";
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText("Score: " + score, 8, 20);
+        }
+
+        function endGame(isWin) {
+            gameRunning = false;
+            alert(isWin ? "🎉 승리했습니다! 축하합니다." : "실패했습니다. 다시 도전해 보세요!");
+            saveScore(playerName, score);
+            location.reload(); // 간단한 재시작을 위해 페이지 새로고침
+        }
+
+        function saveScore(name, score) {
+            const scoresRef = database.ref('scores');
+            scoresRef.push({
+                name: name,
+                score: score,
+                timestamp: Date.now()
+            });
+        }
+
+        function loadLeaderboard() {
+            const scoresRef = database.ref('scores');
+            scoresRef.orderByChild('score').limitToLast(10).on('value', (snapshot) => {
+                const data = snapshot.val();
+                const rankList = document.getElementById("rank-list");
+                rankList.innerHTML = "";
+                
+                let scoresArray = [];
+                for (let id in data) {
+                    scoresArray.push(data[id]);
+                }
+                // 내림차순 정렬
+                scoresArray.sort((a, b) => b.score - a.score);
+
+                scoresArray.forEach((item, index) => {
+                    const div = document.createElement("div");
+                    div.className = "rank-item";
+                    div.innerHTML = `<span>${index + 1}. ${item.name}</span> <span>${item.score}점</span>`;
+                    rankList.appendChild(div);
+                });
+            });
+        }
+
+        function draw() {
+            if (!gameRunning) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBricks();
+            drawBall();
+            drawPaddle();
+            drawScore();
+            collisionDetection();
+
+            if (x + dx > canvas.width - ballRadius || x + dx < ballRadius) dx = -dx;
+            if (y + dy < ballRadius) dy = -dy;
+            else if (y + dy > canvas.height - ballRadius) {
+                if (x > paddleX && x < paddleX + paddleWidth) {
+                    dy = -dy;
+                } else {
+                    endGame(false);
+                    return;
+                }
+            }
+
+            if (rightPressed && paddleX < canvas.width - paddleWidth) paddleX += 7;
+            else if (leftPressed && paddleX > 0) paddleX -= 7;
+
+            x += dx;
+            y += dy;
+            requestAnimationFrame(draw);
+        }
+    </script>
+</body>
+</html>
